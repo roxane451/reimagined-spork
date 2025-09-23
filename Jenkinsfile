@@ -38,9 +38,9 @@ pipeline {
                             podman tag ${CAST_IMAGE}:${BUILD_TAG} ${CAST_IMAGE}:latest
                         fi
                         
-                        # Build Nginx
+                        # Build Nginx - SOLUTION: utiliser le nom complet
                         cat > Dockerfile.nginx << EOF
-FROM nginx:alpine
+FROM docker.io/nginx:alpine
 COPY nginx_config.conf /etc/nginx/conf.d/default.conf 2>/dev/null || echo "server { listen 80; location / { return 200 'OK'; } }" > /etc/nginx/conf.d/default.conf
 EXPOSE 80
 EOF
