@@ -2,15 +2,15 @@ pipeline {
     agent any
     
     environment {
-        // Configuration GitHub Container Registry
-        GITHUB_REGISTRY = 'ghcr.io'
-        GITHUB_CREDENTIALS = credentials('github-registry')
-        GITHUB_USERNAME = 'roxane451'
+        // Configuration c8n.io Container Registry
+        REGISTRY = 'c8n.io'
+        REGISTRY_CREDENTIALS = credentials('c8n-registry')
+        USERNAME = 'roxane451'
         
         // Configuration des services
-        MOVIE_SERVICE_IMAGE = "${GITHUB_REGISTRY}/${GITHUB_USERNAME}/movie-service"
-        CAST_SERVICE_IMAGE = "${GITHUB_REGISTRY}/${GITHUB_USERNAME}/cast-service"
-        NGINX_IMAGE = "${GITHUB_REGISTRY}/${GITHUB_USERNAME}/nginx-proxy"
+        MOVIE_SERVICE_IMAGE = "${REGISTRY}/${USERNAME}/movie-service"
+        CAST_SERVICE_IMAGE = "${REGISTRY}/${USERNAME}/cast-service"
+        NGINX_IMAGE = "${REGISTRY}/${USERNAME}/nginx"
         
         // Variables build
         BUILD_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
@@ -169,7 +169,7 @@ EOF
                             sh """
                                 # Vérifier la taille des images
                                 echo "📏 Taille des images:"
-                                podman images | grep -E "(movie-service|cast-service|nginx-proxy)"
+                                podman images | grep -E "(movie-service|cast-service|nginx)"
                                 
                                 # Vérifier les vulnérabilités (basique)
                                 echo "🔍 Inspection des images:"
@@ -183,13 +183,13 @@ EOF
             }
         }
         
-        stage('📤 Push to GitHub Registry') {
+        stage('📤 Push to c8n.io Registry') {
             steps {
                 script {
-                    echo "📤 Push vers GitHub Container Registry..."
+                    echo "📤 Push vers c8n.io Container Registry..."
                     sh """
-                        # Login vers GitHub Container Registry
-                        echo \$GITHUB_CREDENTIALS_PSW | podman login ${GITHUB_REGISTRY} -u \$GITHUB_CREDENTIALS_USR --password-stdin
+                        # Login vers c8n.io Container Registry
+                        echo \$REGISTRY_CREDENTIALS_PSW | podman login ${REGISTRY} -u \$REGISTRY_CREDENTIALS_USR --password-stdin
                         
                         # Push Movie Service
                         podman push ${MOVIE_SERVICE_IMAGE}:${BUILD_TAG}
@@ -207,7 +207,7 @@ EOF
                         podman push ${NGINX_IMAGE}:${BRANCH_NAME}
                         
                         echo "✅ Toutes les images pushées avec succès"
-                        echo "📦 Registry: ${GITHUB_REGISTRY}/${GITHUB_USERNAME}/"
+                        echo "📦 Registry: ${REGISTRY}/${USERNAME}/"
                     """
                 }
             }
@@ -324,9 +324,13 @@ EOF
     post {
         always {
             script {
+                // Utiliser des variables avec vérification d'existence
+                def registry = env.REGISTRY ?: 'c8n.io'
+                def username = env.USERNAME ?: 'roxane451'
+                
                 sh """
                     # Logout du registry
-                    podman logout ${GITHUB_REGISTRY} || true
+                    podman logout ${registry} || true
                     
                     # Nettoyage des images locales anciennes
                     podman image prune -f || true
@@ -337,17 +341,23 @@ EOF
         }
         
         success {
-            echo """
-            ✅ Pipeline reimagined-spork réussi !
-            
-            📦 Images construites:
-            • Movie Service: ${MOVIE_SERVICE_IMAGE}:${BUILD_TAG}
-            • Cast Service: ${CAST_SERVICE_IMAGE}:${BUILD_TAG}
-            • Nginx Proxy: ${NGINX_IMAGE}:${BUILD_TAG}
-            
-            🌐 Registry: ${GITHUB_REGISTRY}/${GITHUB_USERNAME}/
-            🚀 Déploiements selon la branche: ${BRANCH_NAME}
-            """
+            script {
+                def registry = env.REGISTRY ?: 'c8n.io'
+                def username = env.USERNAME ?: 'roxane451'
+                def buildTag = env.BUILD_TAG ?: "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7)}"
+                
+                echo """
+                ✅ Pipeline reimagined-spork réussi !
+                
+                📦 Images construites:
+                • Movie Service: ${registry}/${username}/movie-service:${buildTag}
+                • Cast Service: ${registry}/${username}/cast-service:${buildTag}  
+                • Nginx Proxy: ${registry}/${username}/nginx:${buildTag}
+                
+                🌐 Registry: ${registry}/${username}/
+                🚀 Déploiements selon la branche: ${env.BRANCH_NAME ?: 'unknown'}
+                """
+            }
         }
         
         failure {
@@ -367,10 +377,10 @@ def deployToEnvironment(environment, imageTag) {
     
     sh """
         # Mise à jour des secrets registry
-        kubectl create secret docker-registry github-registry-secret \
-            --docker-server=${GITHUB_REGISTRY} \
-            --docker-username=\$GITHUB_CREDENTIALS_USR \
-            --docker-password=\$GITHUB_CREDENTIALS_PSW \
+        kubectl create secret docker-registry c8n-registry-secret \
+            --docker-server=${REGISTRY} \
+            --docker-username=\$REGISTRY_CREDENTIALS_USR \
+            --docker-password=\$REGISTRY_CREDENTIALS_PSW \
             --namespace=${environment} \
             --dry-run=client -o yaml | kubectl apply -f -
         
