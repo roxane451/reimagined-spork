@@ -14,115 +14,128 @@ pipeline {
     }
     
     stages {
-        stage('📥 Checkout') {
+        stage('Checkout') {
             steps {
-                echo "📥 Récupération du code..."
+                echo "Récupération du code..."
                 checkout scm
             }
         }
         
-        stage('🔨 Build Images') {
+        stage('Build Images') {
             steps {
-                echo "🔨 Construction des images..."
+                echo "Construction des images..."
                 script {
                     sh '''
                         # Build Movie Service
                         if [ -d "movie-service" ] && [ -f "movie-service/Dockerfile" ]; then
                             podman build -t ${MOVIE_IMAGE}:${BUILD_TAG} ./movie-service/
                             podman tag ${MOVIE_IMAGE}:${BUILD_TAG} ${MOVIE_IMAGE}:latest
-                            echo "✅ Movie service built"
+                            echo "Movie service built"
                         fi
                         
                         # Build Cast Service  
                         if [ -d "cast-service" ] && [ -f "cast-service/Dockerfile" ]; then
                             podman build -t ${CAST_IMAGE}:${BUILD_TAG} ./cast-service/
                             podman tag ${CAST_IMAGE}:${BUILD_TAG} ${CAST_IMAGE}:latest
-                            echo "✅ Cast service built"
+                            echo "Cast service built"
                         fi
                         
                         # Build Nginx
                         if [ -d "nginx" ] && [ -f "nginx/Dockerfile" ]; then
                             podman build -t ${NGINX_IMAGE}:${BUILD_TAG} ./nginx/
                             podman tag ${NGINX_IMAGE}:${BUILD_TAG} ${NGINX_IMAGE}:latest
-                            echo "✅ Nginx built"
+                            echo "Nginx built"
+                        elif [ -f "nginx_config.conf" ]; then
+                            # Fallback: utiliser nginx_config.conf existant
+                            mkdir -p nginx
+                            cp nginx_config.conf nginx/nginx.conf
+                            cat > nginx/Dockerfile << EOF
+FROM docker.io/library/nginx:alpine
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+EOF
+                            podman build -t ${NGINX_IMAGE}:${BUILD_TAG} ./nginx/
+                            podman tag ${NGINX_IMAGE}:${BUILD_TAG} ${NGINX_IMAGE}:latest
+                            echo "Nginx built (using existing config)"
                         fi
                         
-                        echo "🎯 Images construites:"
+                        echo "Images construites:"
                         podman images | grep ${USERNAME}
                     '''
                 }
             }
         }
         
-        stage('📤 Push to Registry') {
+        stage('Push to Registry') {
             steps {
-                echo "📤 Publication vers c8n.io..."
+                echo "Publication vers c8n.io..."
                 withCredentials([usernamePassword(credentialsId: 'c8n-registry', usernameVariable: 'REGISTRY_USER', passwordVariable: 'REGISTRY_PASS')]) {
                     sh '''
-                        # Debug des variables (email peut contenir des caractères spéciaux)
-                        echo "🔍 Registry: ${REGISTRY}"
-                        echo "🔍 Username: ${REGISTRY_USER}"
+                        # Debug des variables
+                        echo "Registry: ${REGISTRY}"
+                        echo "Username: ${REGISTRY_USER}"
                         
                         # Logout d'abord pour nettoyer
                         podman logout ${REGISTRY} 2>/dev/null || true
                         
-                        # Méthode sécurisée avec guillemets pour gérer les emails
-                        echo "🔐 Connexion avec adresse email..."
+                        # Connexion avec adresse email
+                        echo "Connexion avec adresse email..."
                         if printf '%s' "${REGISTRY_PASS}" | podman login "${REGISTRY}" -u "${REGISTRY_USER}" --password-stdin; then
-                            echo "✅ Connexion réussie"
+                            echo "Connexion réussie"
                         else
-                            echo "❌ Échec de connexion"
-                            echo "🔍 Vérification des credentials..."
+                            echo "Échec de connexion"
+                            echo "Vérification des credentials..."
                             echo "Username utilisé: ${REGISTRY_USER}"
                             exit 1
                         fi
                         
                         # Vérification de la connexion
                         if podman login ${REGISTRY} --get-login >/dev/null 2>&1; then
-                            echo "✅ Connexion confirmée"
+                            echo "Connexion confirmée"
                         else
-                            echo "❌ Connexion non confirmée"
+                            echo "Connexion non confirmée"
                             exit 1
                         fi
                         
                         # Push Movie Service
                         if podman images | grep -q "${MOVIE_IMAGE}"; then
-                            echo "📤 Push movie service..."
+                            echo "Push movie service..."
                             podman push ${MOVIE_IMAGE}:${BUILD_TAG}
                             podman push ${MOVIE_IMAGE}:latest
-                            echo "✅ Movie service pushed"
+                            echo "Movie service pushed"
                         fi
                         
                         # Push Cast Service  
                         if podman images | grep -q "${CAST_IMAGE}"; then
-                            echo "📤 Push cast service..."
+                            echo "Push cast service..."
                             podman push ${CAST_IMAGE}:${BUILD_TAG}
                             podman push ${CAST_IMAGE}:latest
-                            echo "✅ Cast service pushed"
+                            echo "Cast service pushed"
                         fi
                         
                         # Push Nginx
                         if podman images | grep -q "${NGINX_IMAGE}"; then
-                            echo "📤 Push nginx..."
+                            echo "Push nginx..."
                             podman push ${NGINX_IMAGE}:${BUILD_TAG}
                             podman push ${NGINX_IMAGE}:latest
-                            echo "✅ Nginx pushed"
+                            echo "Nginx pushed"
                         fi
                         
-                        echo "🎉 Toutes les images publiées sur ${REGISTRY}/${USERNAME}/"
+                        echo "Toutes les images publiées sur ${REGISTRY}/${USERNAME}/"
                     '''
                 }
             }
         }
         
-        stage('🚀 Deploy DEV') {
+        stage('Deploy DEV') {
             when { 
                 anyOf { 
                     branch 'main'; branch 'master'; branch 'develop' 
                 } 
             }
             steps {
-                echo "🚀 Déploiement automatique en DEV..."
+                echo "Déploiement automatique en DEV..."
                 script {
                     sh '''
                         kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
@@ -171,13 +184,13 @@ spec:
 EOF
                         
                         kubectl rollout status deployment/reimagined-spork -n dev --timeout=300s
-                        echo "✅ Déploiement DEV terminé"
+                        echo "Déploiement DEV terminé"
                     '''
                 }
             }
         }
         
-        stage('✋ Production Approval') {
+        stage('Production Approval') {
             when { 
                 anyOf { 
                     branch 'main'; branch 'master' 
@@ -186,7 +199,7 @@ EOF
             steps {
                 script {
                     timeout(time: 5, unit: 'MINUTES') {
-                        input message: '🚀 Déployer en PRODUCTION ?', 
+                        input message: 'Déployer en PRODUCTION ?', 
                               ok: 'DÉPLOYER',
                               parameters: [
                                   choice(name: 'DEPLOY_PROD', choices: ['Non', 'Oui'], description: 'Confirmer ?')
@@ -196,7 +209,7 @@ EOF
             }
         }
         
-        stage('🏭 Deploy PROD') {
+        stage('Deploy PROD') {
             when { 
                 allOf {
                     anyOf { branch 'main'; branch 'master' }
@@ -204,7 +217,7 @@ EOF
                 }
             }
             steps {
-                echo "🏭 Déploiement PRODUCTION..."
+                echo "Déploiement PRODUCTION..."
                 script {
                     sh '''
                         kubectl create namespace prod --dry-run=client -o yaml | kubectl apply -f -
@@ -266,7 +279,7 @@ spec:
 EOF
                         
                         kubectl rollout status deployment/reimagined-spork -n prod --timeout=600s
-                        echo "🎉 Déploiement PROD terminé !"
+                        echo "Déploiement PROD terminé !"
                     '''
                 }
             }
@@ -280,14 +293,14 @@ EOF
         
         success {
             echo """
-            ✅ Pipeline réussi !
-            📦 Images: ${REGISTRY}/${USERNAME}/
-            🏷️ Tag: ${BUILD_TAG}
+            Pipeline réussi !
+            Images: ${REGISTRY}/${USERNAME}/
+            Tag: ${BUILD_TAG}
             """
         }
         
         failure {
-            echo "❌ Pipeline échoué ! Vérifiez les logs."
+            echo "Pipeline échoué ! Vérifiez les logs."
         }
     }
 }
