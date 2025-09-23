@@ -1,7 +1,7 @@
 services:
   movie-service:
     build: ./movie-service
-    image: ghcr.io/roxane451/movie-service:latest
+    image: c8n.io/roxane451/movie-service:latest
     container_name: movie-service
     expose:
       - 8000
@@ -22,7 +22,7 @@ services:
 
   cast-service:
     build: ./cast-service
-    image: ghcr.io/roxane451/cast-service:latest
+    image: c8n.io/roxane451/cast-service:latest
     container_name: cast-service
     expose:
       - 8000
@@ -45,7 +45,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.nginx
-    image: ghcr.io/roxane451/nginx-proxy:latest
+    image: c8n.io/roxane451/nginx:latest
     container_name: nginx
     restart: unless-stopped
     ports:
