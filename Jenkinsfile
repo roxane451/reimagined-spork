@@ -319,24 +319,45 @@ EOF
                 }
             }
         }
+        
+        stage('🧹 Cleanup') {
+            steps {
+                script {
+                    echo "🧹 Nettoyage final..."
+                    sh """
+                        # Logout du registry
+                        podman logout ${REGISTRY} || true
+                        
+                        # Nettoyage des images locales anciennes (garder les 3 dernières)
+                        podman image prune -f || true
+                        
+                        # Nettoyage des containers arrêtés
+                        podman container prune -f || true
+                        
+                        # Affichage des images restantes
+                        echo "📦 Images restantes:"
+                        podman images | head -10
+                    """
+                }
+            }
+            post {
+                always {
+                    script {
+                        try {
+                            archiveArtifacts artifacts: 'charts/**/*', allowEmptyArchive: true
+                        } catch (Exception e) {
+                            echo "⚠️ Aucun artifact charts trouvé"
+                        }
+                    }
+                }
+            }
+        }
     }
     
     post {
         always {
             script {
-                // Utiliser des variables avec vérification d'existence
-                def registry = env.REGISTRY ?: 'c8n.io'
-                def username = env.USERNAME ?: 'roxane451'
-                
-                sh """
-                    # Logout du registry
-                    podman logout ${registry} || true
-                    
-                    # Nettoyage des images locales anciennes
-                    podman image prune -f || true
-                """
-                
-                archiveArtifacts artifacts: 'charts/**/*', allowEmptyArchive: true
+                echo "🏁 Pipeline terminé - Nettoyage automatique effectué"
             }
         }
         
@@ -349,13 +370,14 @@ EOF
                 echo """
                 ✅ Pipeline reimagined-spork réussi !
                 
-                📦 Images construites:
+                📦 Images construites et pushées:
                 • Movie Service: ${registry}/${username}/movie-service:${buildTag}
                 • Cast Service: ${registry}/${username}/cast-service:${buildTag}  
                 • Nginx Proxy: ${registry}/${username}/nginx:${buildTag}
                 
                 🌐 Registry: ${registry}/${username}/
                 🚀 Déploiements selon la branche: ${env.BRANCH_NAME ?: 'unknown'}
+                ⏱️ Durée: ${currentBuild.durationString}
                 """
             }
         }
@@ -365,8 +387,15 @@ EOF
             ❌ Pipeline reimagined-spork échoué !
             
             🔍 Vérifiez les logs pour identifier le problème.
-            📞 Services concernés: movie-service, cast-service, nginx-proxy
+            📞 Services concernés: movie-service, cast-service, nginx
+            💡 Vérifiez la configuration du registry c8n.io
             """
+        }
+        
+        cleanup {
+            script {
+                echo "🗑️ Nettoyage final terminé"
+            }
         }
     }
 }
@@ -376,6 +405,9 @@ def deployToEnvironment(environment, imageTag) {
     echo "🚀 Déploiement de reimagined-spork vers: ${environment}"
     
     sh """
+        # Créer le namespace s'il n'existe pas
+        kubectl create namespace ${environment} --dry-run=client -o yaml | kubectl apply -f -
+        
         # Mise à jour des secrets registry
         kubectl create secret docker-registry c8n-registry-secret \
             --docker-server=${REGISTRY} \
@@ -384,21 +416,71 @@ def deployToEnvironment(environment, imageTag) {
             --namespace=${environment} \
             --dry-run=client -o yaml | kubectl apply -f -
         
-        # Déploiement avec Helm
-        helm upgrade --install reimagined-spork-${environment} ./charts \
-            --namespace ${environment} \
-            --set movieService.image.repository=${MOVIE_SERVICE_IMAGE.tokenize(':')[0]} \
-            --set movieService.image.tag=${imageTag} \
-            --set castService.image.repository=${CAST_SERVICE_IMAGE.tokenize(':')[0]} \
-            --set castService.image.tag=${imageTag} \
-            --set nginx.image.repository=${NGINX_IMAGE.tokenize(':')[0]} \
-            --set nginx.image.tag=${imageTag} \
-            --set environment=${environment} \
-            --wait \
-            --timeout=10m
+        # Déploiement avec Helm (si charts/ existe)
+        if [ -d "./charts" ]; then
+            helm upgrade --install reimagined-spork-${environment} ./charts \
+                --namespace ${environment} \
+                --set movieService.image.repository=${MOVIE_SERVICE_IMAGE.tokenize(':')[0]} \
+                --set movieService.image.tag=${imageTag} \
+                --set castService.image.repository=${CAST_SERVICE_IMAGE.tokenize(':')[0]} \
+                --set castService.image.tag=${imageTag} \
+                --set nginx.image.repository=${NGINX_IMAGE.tokenize(':')[0]} \
+                --set nginx.image.tag=${imageTag} \
+                --set environment=${environment} \
+                --wait \
+                --timeout=10m
+        else
+            echo "⚠️ Dossier charts/ non trouvé, déploiement Helm ignoré"
+            
+            # Déploiement basique avec kubectl (exemple)
+            cat << EOF | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reimagined-spork-${environment}
+  namespace: ${environment}
+  labels:
+    app: reimagined-spork
+    environment: ${environment}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reimagined-spork
+  template:
+    metadata:
+      labels:
+        app: reimagined-spork
+    spec:
+      imagePullSecrets:
+      - name: c8n-registry-secret
+      containers:
+      - name: nginx
+        image: ${NGINX_IMAGE}:${imageTag}
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: reimagined-spork-service-${environment}
+  namespace: ${environment}
+spec:
+  selector:
+    app: reimagined-spork
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+EOF
+        fi
         
         # Vérification du déploiement
-        kubectl get pods,services -n ${environment} -l app.kubernetes.io/name=reimagined-spork
+        echo "⏳ Attente du déploiement..."
+        kubectl wait --for=condition=available --timeout=300s deployment/reimagined-spork-${environment} -n ${environment} || true
+        
+        echo "📋 État du déploiement:"
+        kubectl get pods,services -n ${environment} -l app=reimagined-spork
     """
     
     echo "✅ Déploiement réussi en ${environment}"
