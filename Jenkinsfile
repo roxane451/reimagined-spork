@@ -11,10 +11,6 @@ pipeline {
         MOVIE_SERVICE_IMAGE = "${REGISTRY}/${USERNAME}/movie-service"
         CAST_SERVICE_IMAGE = "${REGISTRY}/${USERNAME}/cast-service"
         NGINX_IMAGE = "${REGISTRY}/${USERNAME}/nginx"
-        
-        // Variables build
-        BUILD_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT.take(7)}"
-        BRANCH_NAME = "${env.GIT_BRANCH.replace('origin/', '')}"
     }
     
     options {
@@ -28,8 +24,16 @@ pipeline {
         stage('🔄 Checkout & Setup') {
             steps {
                 script {
-                    echo "🚀 Pipeline reimagined-spork - Branche: ${BRANCH_NAME}"
+                    // Définir les variables dynamiques après checkout
+                    env.BUILD_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'unknown'}"
+                    env.BRANCH_NAME = "${env.GIT_BRANCH?.replace('origin/', '') ?: 'main'}"
+                    
+                    echo "🚀 Pipeline reimagined-spork - Branche: ${env.BRANCH_NAME}"
                     checkout scm
+                    
+                    // Redéfinir BUILD_TAG avec le vrai commit après checkout
+                    env.BUILD_TAG = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'unknown'}"
+                    echo "🏷️ Build Tag: ${env.BUILD_TAG}"
                     
                     sh '''
                         echo "🔧 Vérification des outils..."
@@ -53,9 +57,9 @@ pipeline {
                             dir('movie-service') {
                                 sh """
                                     podman build \
-                                        --tag ${MOVIE_SERVICE_IMAGE}:${BUILD_TAG} \
+                                        --tag ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG} \
                                         --tag ${MOVIE_SERVICE_IMAGE}:latest \
-                                        --tag ${MOVIE_SERVICE_IMAGE}:${BRANCH_NAME} \
+                                        --tag ${MOVIE_SERVICE_IMAGE}:${env.BRANCH_NAME} \
                                         --label "service=movie-service" \
                                         --label "build.number=${BUILD_NUMBER}" \
                                         --label "git.commit=${GIT_COMMIT}" \
@@ -73,9 +77,9 @@ pipeline {
                             dir('cast-service') {
                                 sh """
                                     podman build \
-                                        --tag ${CAST_SERVICE_IMAGE}:${BUILD_TAG} \
+                                        --tag ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG} \
                                         --tag ${CAST_SERVICE_IMAGE}:latest \
-                                        --tag ${CAST_SERVICE_IMAGE}:${BRANCH_NAME} \
+                                        --tag ${CAST_SERVICE_IMAGE}:${env.BRANCH_NAME} \
                                         --label "service=cast-service" \
                                         --label "build.number=${BUILD_NUMBER}" \
                                         --label "git.commit=${GIT_COMMIT}" \
@@ -101,9 +105,9 @@ EOF
                                 
                                 podman build \
                                     -f Dockerfile.nginx \
-                                    --tag ${NGINX_IMAGE}:${BUILD_TAG} \
+                                    --tag ${NGINX_IMAGE}:${env.BUILD_TAG} \
                                     --tag ${NGINX_IMAGE}:latest \
-                                    --tag ${NGINX_IMAGE}:${BRANCH_NAME} \
+                                    --tag ${NGINX_IMAGE}:${env.BRANCH_NAME} \
                                     --label "service=nginx-proxy" \
                                     --label "build.number=${BUILD_NUMBER}" \
                                     .
@@ -126,12 +130,12 @@ EOF
                                     podman run --rm \
                                         -v \$(pwd):/app \
                                         -w /app \
-                                        ${MOVIE_SERVICE_IMAGE}:${BUILD_TAG} \
+                                        ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG} \
                                         python -m pytest tests/ --verbose || echo "Tests à implémenter"
                                         
                                     # Vérification des dépendances
                                     podman run --rm \
-                                        ${MOVIE_SERVICE_IMAGE}:${BUILD_TAG} \
+                                        ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG} \
                                         pip list
                                 """
                             }
@@ -149,12 +153,12 @@ EOF
                                     podman run --rm \
                                         -v \$(pwd):/app \
                                         -w /app \
-                                        ${CAST_SERVICE_IMAGE}:${BUILD_TAG} \
+                                        ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG} \
                                         python -m pytest tests/ --verbose || echo "Tests à implémenter"
                                         
                                     # Vérification des dépendances
                                     podman run --rm \
-                                        ${CAST_SERVICE_IMAGE}:${BUILD_TAG} \
+                                        ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG} \
                                         pip list
                                 """
                             }
@@ -173,9 +177,9 @@ EOF
                                 
                                 # Vérifier les vulnérabilités (basique)
                                 echo "🔍 Inspection des images:"
-                                podman inspect ${MOVIE_SERVICE_IMAGE}:${BUILD_TAG} > /dev/null
-                                podman inspect ${CAST_SERVICE_IMAGE}:${BUILD_TAG} > /dev/null
-                                podman inspect ${NGINX_IMAGE}:${BUILD_TAG} > /dev/null
+                                podman inspect ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG} > /dev/null
+                                podman inspect ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG} > /dev/null
+                                podman inspect ${NGINX_IMAGE}:${env.BUILD_TAG} > /dev/null
                             """
                         }
                     }
@@ -192,19 +196,19 @@ EOF
                         echo \$REGISTRY_CREDENTIALS_PSW | podman login ${REGISTRY} -u \$REGISTRY_CREDENTIALS_USR --password-stdin
                         
                         # Push Movie Service
-                        podman push ${MOVIE_SERVICE_IMAGE}:${BUILD_TAG}
+                        podman push ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG}
                         podman push ${MOVIE_SERVICE_IMAGE}:latest
-                        podman push ${MOVIE_SERVICE_IMAGE}:${BRANCH_NAME}
+                        podman push ${MOVIE_SERVICE_IMAGE}:${env.BRANCH_NAME}
                         
                         # Push Cast Service  
-                        podman push ${CAST_SERVICE_IMAGE}:${BUILD_TAG}
+                        podman push ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG}
                         podman push ${CAST_SERVICE_IMAGE}:latest
-                        podman push ${CAST_SERVICE_IMAGE}:${BRANCH_NAME}
+                        podman push ${CAST_SERVICE_IMAGE}:${env.BRANCH_NAME}
                         
                         # Push Nginx Proxy
-                        podman push ${NGINX_IMAGE}:${BUILD_TAG}
+                        podman push ${NGINX_IMAGE}:${env.BUILD_TAG}
                         podman push ${NGINX_IMAGE}:latest
-                        podman push ${NGINX_IMAGE}:${BRANCH_NAME}
+                        podman push ${NGINX_IMAGE}:${env.BRANCH_NAME}
                         
                         echo "✅ Toutes les images pushées avec succès"
                         echo "📦 Registry: ${REGISTRY}/${USERNAME}/"
@@ -225,7 +229,7 @@ EOF
                     }
                     steps {
                         script {
-                            deployToEnvironment('dev', BUILD_TAG)
+                            deployToEnvironment('dev', env.BUILD_TAG)
                         }
                     }
                 }
@@ -239,7 +243,7 @@ EOF
                     }
                     steps {
                         script {
-                            deployToEnvironment('qa', BUILD_TAG)
+                            deployToEnvironment('qa', env.BUILD_TAG)
                         }
                     }
                 }
@@ -254,7 +258,7 @@ EOF
                     }
                     steps {
                         script {
-                            deployToEnvironment('staging', BUILD_TAG)
+                            deployToEnvironment('staging', env.BUILD_TAG)
                         }
                     }
                 }
@@ -277,18 +281,18 @@ EOF
                             🚀 Déployer reimagined-spork en PRODUCTION ?
                             
                             Services à déployer:
-                            • Movie Service: ''' + "${MOVIE_SERVICE_IMAGE}:${BUILD_TAG}" + '''
-                            • Cast Service: ''' + "${CAST_SERVICE_IMAGE}:${BUILD_TAG}" + '''
-                            • Nginx Proxy: ''' + "${NGINX_IMAGE}:${BUILD_TAG}" + '''
+                            • Movie Service: ''' + "${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG}" + '''
+                            • Cast Service: ''' + "${CAST_SERVICE_IMAGE}:${env.BUILD_TAG}" + '''
+                            • Nginx Proxy: ''' + "${NGINX_IMAGE}:${env.BUILD_TAG}" + '''
                             
                             Commit: ''' + "${GIT_COMMIT}" + '''
-                            Branche: ''' + "${BRANCH_NAME}" + '''
+                            Branche: ''' + "${env.BRANCH_NAME}" + '''
                         ''', ok: 'DÉPLOYER EN PRODUCTION',
                         submitterParameter: 'DEPLOYER'
                     }
                     
                     echo "✅ Approbation production reçue de: ${env.DEPLOYER}"
-                    deployToEnvironment('prod', BUILD_TAG)
+                    deployToEnvironment('prod', env.BUILD_TAG)
                 }
             }
         }
