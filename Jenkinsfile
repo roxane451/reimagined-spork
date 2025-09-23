@@ -54,38 +54,44 @@ pipeline {
             }
         }
         
-        stage('📤 Push to Registry') {
+stage('📤 Push to Registry') {
             steps {
                 echo "📤 Publication vers c8n.io..."
-                withCredentials([usernamePassword(credentialsId: 'c8n-registry', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
-                    sh '''
-                        echo $PASS | podman login ${REGISTRY} -u $USER --password-stdin
-                        
-                        # Push Movie Service
-                        if podman images | grep -q "${MOVIE_IMAGE}"; then
-                            podman push ${MOVIE_IMAGE}:${BUILD_TAG}
-                            podman push ${MOVIE_IMAGE}:latest
-                            echo "✅ Movie service pushed"
-                        fi
-                        
-                        # Push Cast Service
-                        if podman images | grep -q "${CAST_IMAGE}"; then
-                            podman push ${CAST_IMAGE}:${BUILD_TAG} 
-                            podman push ${CAST_IMAGE}:latest
-                            echo "✅ Cast service pushed"
-                        fi
-                        
-                        # Push Nginx
-                        if podman images | grep -q "${NGINX_IMAGE}"; then
-                            podman push ${NGINX_IMAGE}:${BUILD_TAG}
-                            podman push ${NGINX_IMAGE}:latest
-                            echo "✅ Nginx pushed"
-                        fi
-                        
-                        podman logout ${REGISTRY}
-                        echo "🎉 Images publiées sur ${REGISTRY}/${USERNAME}/"
-                    '''
-                }
+                sh '''
+                    # Vérifier si on est déjà connecté
+                    if podman login ${REGISTRY} --get-login > /dev/null 2>&1; then
+                        echo "✅ Déjà connecté à ${REGISTRY}"
+                    else
+                        echo "❌ Non connecté à ${REGISTRY}"
+                        exit 1
+                    fi
+                    
+                    # Push Movie Service
+                    if podman images | grep -q "${MOVIE_IMAGE}"; then
+                        echo "📤 Push movie service..."
+                        podman push ${MOVIE_IMAGE}:${BUILD_TAG}
+                        podman push ${MOVIE_IMAGE}:latest
+                        echo "✅ Movie service pushed"
+                    fi
+                    
+                    # Push Cast Service
+                    if podman images | grep -q "${CAST_IMAGE}"; then
+                        echo "📤 Push cast service..."
+                        podman push ${CAST_IMAGE}:${BUILD_TAG} 
+                        podman push ${CAST_IMAGE}:latest
+                        echo "✅ Cast service pushed"
+                    fi
+                    
+                    # Push Nginx
+                    if podman images | grep -q "${NGINX_IMAGE}"; then
+                        echo "📤 Push nginx..."
+                        podman push ${NGINX_IMAGE}:${BUILD_TAG}
+                        podman push ${NGINX_IMAGE}:latest
+                        echo "✅ Nginx pushed"
+                    fi
+                    
+                    echo "🎉 Toutes les images publiées sur ${REGISTRY}/${USERNAME}/"
+                '''
             }
         }
         
