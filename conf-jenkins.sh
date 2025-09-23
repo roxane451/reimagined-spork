@@ -1,16 +1,12 @@
-#!/bin/bash
+FROM jenkins/jenkins:lts
 
-# Créer un volume persistant pour Jenkins
-podman volume create jenkins-data
+USER root
 
-# Lancer Jenkins avec Podman (sans socket)
-podman run -d \
-  --name jenkins \
-  -p 8080:8080 \
-  -p 50000:50000 \
-  -v jenkins-data:/var/jenkins_home \
-  --privileged \
-  jenkins/jenkins:lts
+# Mettre à jour les paquets et installer Podman
+RUN apt-get update && \
+    apt-get install -y podman && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Récupérer le mot de passe initial
-podman logs jenkins | grep -A 5 "Please use the following password"
+# Revenir à l'utilisateur Jenkins pour la compatibilité
+USER jenkins
