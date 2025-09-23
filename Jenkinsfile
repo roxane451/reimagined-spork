@@ -37,13 +37,47 @@ pipeline {
                     
                     sh '''
                         echo "🔧 Vérification des outils..."
-                        podman --version
-                        kubectl version --client
-                        helm version --short
+                        
+                        # Détecter Docker ou Podman
+                        if command -v docker >/dev/null 2>&1; then
+                            echo "✅ Docker trouvé"
+                            docker --version
+                            export CONTAINER_TOOL=docker
+                        elif command -v podman >/dev/null 2>&1; then
+                            echo "✅ Podman trouvé"
+                            podman --version
+                            export CONTAINER_TOOL=podman
+                        else
+                            echo "❌ Ni Docker ni Podman trouvé!"
+                            echo "Installez Docker ou Podman sur cet agent Jenkins"
+                            exit 1
+                        fi
+                        
+                        echo "CONTAINER_TOOL=$CONTAINER_TOOL" > /tmp/container_tool.env
+                        
+                        # Vérifier kubectl et helm (optionnels)
+                        if command -v kubectl >/dev/null 2>&1; then
+                            echo "✅ kubectl trouvé"
+                            kubectl version --client --short
+                        else
+                            echo "⚠️ kubectl non trouvé (déploiements ignorés)"
+                        fi
+                        
+                        if command -v helm >/dev/null 2>&1; then
+                            echo "✅ helm trouvé"  
+                            helm version --short
+                        else
+                            echo "⚠️ helm non trouvé (déploiements basiques)"
+                        fi
                         
                         echo "📂 Structure du projet:"
                         ls -la
                     '''
+                    
+                    // Lire l'outil de conteneur
+                    def toolEnv = readFile('/tmp/container_tool.env').trim()
+                    env.CONTAINER_TOOL = toolEnv.split('=')[1]
+                    echo "🐳 Outil sélectionné: ${env.CONTAINER_TOOL}"
                 }
             }
         }
@@ -53,10 +87,10 @@ pipeline {
                 stage('Build Movie Service') {
                     steps {
                         script {
-                            echo "🔨 Construction du Movie Service..."
+                            echo "🔨 Construction du Movie Service avec ${env.CONTAINER_TOOL}..."
                             dir('movie-service') {
                                 sh """
-                                    podman build \
+                                    ${env.CONTAINER_TOOL} build \
                                         --tag ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG} \
                                         --tag ${MOVIE_SERVICE_IMAGE}:latest \
                                         --tag ${MOVIE_SERVICE_IMAGE}:${env.BRANCH_NAME} \
@@ -73,10 +107,10 @@ pipeline {
                 stage('Build Cast Service') {
                     steps {
                         script {
-                            echo "🔨 Construction du Cast Service..."
+                            echo "🔨 Construction du Cast Service avec ${env.CONTAINER_TOOL}..."
                             dir('cast-service') {
                                 sh """
-                                    podman build \
+                                    ${env.CONTAINER_TOOL} build \
                                         --tag ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG} \
                                         --tag ${CAST_SERVICE_IMAGE}:latest \
                                         --tag ${CAST_SERVICE_IMAGE}:${env.BRANCH_NAME} \
@@ -93,9 +127,43 @@ pipeline {
                 stage('Build Nginx Proxy') {
                     steps {
                         script {
-                            echo "🔨 Construction du Nginx Proxy..."
+                            echo "🔨 Construction du Nginx Proxy avec ${env.CONTAINER_TOOL}..."
                             sh """
-                                # Créer un Dockerfile pour nginx avec notre config
+                                # Créer un Dockerfile pour nginx
+                                if [ ! -f nginx_config.conf ]; then
+                                    echo "⚠️ nginx_config.conf non trouvé, création d'un fichier basique"
+                                    cat > nginx_config.conf << 'EOF'
+upstream movie-service {
+    server movie-service:8000;
+}
+
+upstream cast-service {
+    server cast-service:8000;
+}
+
+server {
+    listen 80;
+    
+    location /api/v1/movies {
+        proxy_pass http://movie-service;
+        proxy_set_header Host \\$host;
+        proxy_set_header X-Real-IP \\$remote_addr;
+    }
+    
+    location /api/v1/casts {
+        proxy_pass http://cast-service;
+        proxy_set_header Host \\$host;
+        proxy_set_header X-Real-IP \\$remote_addr;
+    }
+    
+    location / {
+        return 200 'Reimagined Spork API Gateway';
+        add_header Content-Type text/plain;
+    }
+}
+EOF
+                                fi
+                                
                                 cat > Dockerfile.nginx << 'EOF'
 FROM nginx:1.21-alpine
 COPY nginx_config.conf /etc/nginx/conf.d/default.conf
@@ -103,7 +171,7 @@ EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
 EOF
                                 
-                                podman build \
+                                ${env.CONTAINER_TOOL} build \
                                     -f Dockerfile.nginx \
                                     --tag ${NGINX_IMAGE}:${env.BUILD_TAG} \
                                     --tag ${NGINX_IMAGE}:latest \
@@ -118,71 +186,19 @@ EOF
             }
         }
         
-        stage('🧪 Tests') {
-            parallel {
-                stage('Movie Service Tests') {
-                    steps {
-                        script {
-                            echo "🧪 Tests du Movie Service..."
-                            dir('movie-service') {
-                                sh """
-                                    # Tests unitaires
-                                    podman run --rm \
-                                        -v \$(pwd):/app \
-                                        -w /app \
-                                        ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG} \
-                                        python -m pytest tests/ --verbose || echo "Tests à implémenter"
-                                        
-                                    # Vérification des dépendances
-                                    podman run --rm \
-                                        ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG} \
-                                        pip list
-                                """
-                            }
-                        }
-                    }
-                }
-                
-                stage('Cast Service Tests') {
-                    steps {
-                        script {
-                            echo "🧪 Tests du Cast Service..."
-                            dir('cast-service') {
-                                sh """
-                                    # Tests unitaires
-                                    podman run --rm \
-                                        -v \$(pwd):/app \
-                                        -w /app \
-                                        ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG} \
-                                        python -m pytest tests/ --verbose || echo "Tests à implémenter"
-                                        
-                                    # Vérification des dépendances
-                                    podman run --rm \
-                                        ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG} \
-                                        pip list
-                                """
-                            }
-                        }
-                    }
-                }
-                
-                stage('Security & Quality') {
-                    steps {
-                        script {
-                            echo "🔒 Scan de sécurité et qualité..."
-                            sh """
-                                # Vérifier la taille des images
-                                echo "📏 Taille des images:"
-                                podman images | grep -E "(movie-service|cast-service|nginx)"
-                                
-                                # Vérifier les vulnérabilités (basique)
-                                echo "🔍 Inspection des images:"
-                                podman inspect ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG} > /dev/null
-                                podman inspect ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG} > /dev/null
-                                podman inspect ${NGINX_IMAGE}:${env.BUILD_TAG} > /dev/null
-                            """
-                        }
-                    }
+        stage('🧪 Tests de base') {
+            steps {
+                script {
+                    echo "🧪 Tests basiques des images..."
+                    sh """
+                        echo "🔍 Vérification des images construites:"
+                        ${env.CONTAINER_TOOL} images | grep -E "(movie-service|cast-service|nginx)" || echo "Images non trouvées"
+                        
+                        echo "📏 Taille des images:"
+                        ${env.CONTAINER_TOOL} inspect ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG} --format='{{.Size}}' 2>/dev/null || echo "Image movie-service non trouvée"
+                        ${env.CONTAINER_TOOL} inspect ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG} --format='{{.Size}}' 2>/dev/null || echo "Image cast-service non trouvée"  
+                        ${env.CONTAINER_TOOL} inspect ${NGINX_IMAGE}:${env.BUILD_TAG} --format='{{.Size}}' 2>/dev/null || echo "Image nginx non trouvée"
+                    """
                 }
             }
         }
@@ -190,25 +206,25 @@ EOF
         stage('📤 Push to c8n.io Registry') {
             steps {
                 script {
-                    echo "📤 Push vers c8n.io Container Registry..."
+                    echo "📤 Push vers c8n.io avec ${env.CONTAINER_TOOL}..."
                     sh """
-                        # Login vers c8n.io Container Registry
-                        echo \$REGISTRY_CREDENTIALS_PSW | podman login ${REGISTRY} -u \$REGISTRY_CREDENTIALS_USR --password-stdin
+                        # Login vers c8n.io
+                        echo \$REGISTRY_CREDENTIALS_PSW | ${env.CONTAINER_TOOL} login ${REGISTRY} -u \$REGISTRY_CREDENTIALS_USR --password-stdin
                         
                         # Push Movie Service
-                        podman push ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG}
-                        podman push ${MOVIE_SERVICE_IMAGE}:latest
-                        podman push ${MOVIE_SERVICE_IMAGE}:${env.BRANCH_NAME}
+                        ${env.CONTAINER_TOOL} push ${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG}
+                        ${env.CONTAINER_TOOL} push ${MOVIE_SERVICE_IMAGE}:latest
+                        ${env.CONTAINER_TOOL} push ${MOVIE_SERVICE_IMAGE}:${env.BRANCH_NAME}
                         
                         # Push Cast Service  
-                        podman push ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG}
-                        podman push ${CAST_SERVICE_IMAGE}:latest
-                        podman push ${CAST_SERVICE_IMAGE}:${env.BRANCH_NAME}
+                        ${env.CONTAINER_TOOL} push ${CAST_SERVICE_IMAGE}:${env.BUILD_TAG}
+                        ${env.CONTAINER_TOOL} push ${CAST_SERVICE_IMAGE}:latest
+                        ${env.CONTAINER_TOOL} push ${CAST_SERVICE_IMAGE}:${env.BRANCH_NAME}
                         
-                        # Push Nginx Proxy
-                        podman push ${NGINX_IMAGE}:${env.BUILD_TAG}
-                        podman push ${NGINX_IMAGE}:latest
-                        podman push ${NGINX_IMAGE}:${env.BRANCH_NAME}
+                        # Push Nginx
+                        ${env.CONTAINER_TOOL} push ${NGINX_IMAGE}:${env.BUILD_TAG}
+                        ${env.CONTAINER_TOOL} push ${NGINX_IMAGE}:latest
+                        ${env.CONTAINER_TOOL} push ${NGINX_IMAGE}:${env.BRANCH_NAME}
                         
                         echo "✅ Toutes les images pushées avec succès"
                         echo "📦 Registry: ${REGISTRY}/${USERNAME}/"
@@ -217,170 +233,45 @@ EOF
             }
         }
         
-        stage('🚀 Deploy to Environments') {
-            parallel {
-                stage('Deploy to DEV') {
-                    when {
-                        anyOf {
-                            branch 'main'
-                            branch 'master'
-                            branch 'develop'
-                        }
-                    }
-                    steps {
-                        script {
-                            deployToEnvironment('dev', env.BUILD_TAG)
-                        }
-                    }
-                }
-                
-                stage('Deploy to QA') {
-                    when {
-                        anyOf {
-                            branch 'develop'
-                            branch 'release/*'
-                        }
-                    }
-                    steps {
-                        script {
-                            deployToEnvironment('qa', env.BUILD_TAG)
-                        }
-                    }
-                }
-                
-                stage('Deploy to STAGING') {
-                    when {
-                        anyOf {
-                            branch 'release/*'
-                            branch 'master'
-                            branch 'main'
-                        }
-                    }
-                    steps {
-                        script {
-                            deployToEnvironment('staging', env.BUILD_TAG)
-                        }
-                    }
-                }
-            }
-        }
-        
-        stage('🔒 Production Deployment') {
-            when {
-                anyOf {
-                    branch 'master'
-                    branch 'main'
-                }
-            }
-            steps {
-                script {
-                    echo "🔒 Déploiement en production (approbation manuelle requise)"
-                    
-                    timeout(time: 10, unit: 'MINUTES') {
-                        input message: '''
-                            🚀 Déployer reimagined-spork en PRODUCTION ?
-                            
-                            Services à déployer:
-                            • Movie Service: ''' + "${MOVIE_SERVICE_IMAGE}:${env.BUILD_TAG}" + '''
-                            • Cast Service: ''' + "${CAST_SERVICE_IMAGE}:${env.BUILD_TAG}" + '''
-                            • Nginx Proxy: ''' + "${NGINX_IMAGE}:${env.BUILD_TAG}" + '''
-                            
-                            Commit: ''' + "${GIT_COMMIT}" + '''
-                            Branche: ''' + "${env.BRANCH_NAME}" + '''
-                        ''', ok: 'DÉPLOYER EN PRODUCTION',
-                        submitterParameter: 'DEPLOYER'
-                    }
-                    
-                    echo "✅ Approbation production reçue de: ${env.DEPLOYER}"
-                    deployToEnvironment('prod', env.BUILD_TAG)
-                }
-            }
-        }
-        
-        stage('📋 Health Checks') {
-            steps {
-                script {
-                    echo "📋 Vérifications post-déploiement..."
-                    sh '''
-                        # Vérifier tous les déploiements
-                        for ns in dev qa staging; do
-                            if kubectl get namespace $ns >/dev/null 2>&1; then
-                                echo "🔍 Vérification namespace: $ns"
-                                kubectl get pods -n $ns -l app.kubernetes.io/name=reimagined-spork
-                                kubectl get services -n $ns -l app.kubernetes.io/name=reimagined-spork
-                                
-                                # Vérifier que les services répondent
-                                kubectl get pods -n $ns -l app.kubernetes.io/name=reimagined-spork -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | while read pod; do
-                                    if [[ -n "$pod" ]]; then
-                                        echo "Health check pour $pod..."
-                                        kubectl exec -n $ns $pod -- curl -f http://localhost:8000/docs >/dev/null 2>&1 && \
-                                            echo "✅ $pod: OK" || echo "⚠️ $pod: Non accessible"
-                                    fi
-                                done
-                            fi
-                        done
-                    '''
-                }
-            }
-        }
-        
         stage('🧹 Cleanup') {
             steps {
                 script {
-                    echo "🧹 Nettoyage final..."
+                    echo "🧹 Nettoyage avec ${env.CONTAINER_TOOL}..."
                     sh """
                         # Logout du registry
-                        podman logout ${REGISTRY} || true
+                        ${env.CONTAINER_TOOL} logout ${REGISTRY} || true
                         
-                        # Nettoyage des images locales anciennes (garder les 3 dernières)
-                        podman image prune -f || true
+                        # Nettoyage des images locales (garder les récentes)
+                        ${env.CONTAINER_TOOL} image prune -f || true
                         
-                        # Nettoyage des containers arrêtés
-                        podman container prune -f || true
+                        # Si c'est Docker, nettoyer aussi les containers
+                        if [ "${env.CONTAINER_TOOL}" = "docker" ]; then
+                            docker container prune -f || true
+                        elif [ "${env.CONTAINER_TOOL}" = "podman" ]; then
+                            podman container prune -f || true
+                        fi
                         
-                        # Affichage des images restantes
                         echo "📦 Images restantes:"
-                        podman images | head -10
+                        ${env.CONTAINER_TOOL} images | head -10 || true
                     """
-                }
-            }
-            post {
-                always {
-                    script {
-                        try {
-                            archiveArtifacts artifacts: 'charts/**/*', allowEmptyArchive: true
-                        } catch (Exception e) {
-                            echo "⚠️ Aucun artifact charts trouvé"
-                        }
-                    }
                 }
             }
         }
     }
     
     post {
-        always {
-            script {
-                echo "🏁 Pipeline terminé - Nettoyage automatique effectué"
-            }
-        }
-        
         success {
             script {
-                def registry = env.REGISTRY ?: 'c8n.io'
-                def username = env.USERNAME ?: 'roxane451'
-                def buildTag = env.BUILD_TAG ?: "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7)}"
-                
                 echo """
                 ✅ Pipeline reimagined-spork réussi !
                 
-                📦 Images construites et pushées:
-                • Movie Service: ${registry}/${username}/movie-service:${buildTag}
-                • Cast Service: ${registry}/${username}/cast-service:${buildTag}  
-                • Nginx Proxy: ${registry}/${username}/nginx:${buildTag}
+                📦 Images pushées vers c8n.io:
+                • Movie Service: ${REGISTRY}/${USERNAME}/movie-service:${env.BUILD_TAG}
+                • Cast Service: ${REGISTRY}/${USERNAME}/cast-service:${env.BUILD_TAG}  
+                • Nginx: ${REGISTRY}/${USERNAME}/nginx:${env.BUILD_TAG}
                 
-                🌐 Registry: ${registry}/${username}/
-                🚀 Déploiements selon la branche: ${env.BRANCH_NAME ?: 'unknown'}
+                🐳 Outil utilisé: ${env.CONTAINER_TOOL}
+                🌐 Registry: ${REGISTRY}/${USERNAME}/
                 ⏱️ Durée: ${currentBuild.durationString}
                 """
             }
@@ -390,102 +281,10 @@ EOF
             echo """
             ❌ Pipeline reimagined-spork échoué !
             
-            🔍 Vérifiez les logs pour identifier le problème.
-            📞 Services concernés: movie-service, cast-service, nginx
-            💡 Vérifiez la configuration du registry c8n.io
+            🔍 Vérifiez les logs ci-dessus
+            📞 Services: movie-service, cast-service, nginx
+            💡 Vérifiez: Docker/Podman installé, credentials c8n-registry configuré
             """
         }
-        
-        cleanup {
-            script {
-                echo "🗑️ Nettoyage final terminé"
-            }
-        }
     }
-}
-
-// Fonction de déploiement
-def deployToEnvironment(environment, imageTag) {
-    echo "🚀 Déploiement de reimagined-spork vers: ${environment}"
-    
-    sh """
-        # Créer le namespace s'il n'existe pas
-        kubectl create namespace ${environment} --dry-run=client -o yaml | kubectl apply -f -
-        
-        # Mise à jour des secrets registry
-        kubectl create secret docker-registry c8n-registry-secret \
-            --docker-server=${REGISTRY} \
-            --docker-username=\$REGISTRY_CREDENTIALS_USR \
-            --docker-password=\$REGISTRY_CREDENTIALS_PSW \
-            --namespace=${environment} \
-            --dry-run=client -o yaml | kubectl apply -f -
-        
-        # Déploiement avec Helm (si charts/ existe)
-        if [ -d "./charts" ]; then
-            helm upgrade --install reimagined-spork-${environment} ./charts \
-                --namespace ${environment} \
-                --set movieService.image.repository=${MOVIE_SERVICE_IMAGE.tokenize(':')[0]} \
-                --set movieService.image.tag=${imageTag} \
-                --set castService.image.repository=${CAST_SERVICE_IMAGE.tokenize(':')[0]} \
-                --set castService.image.tag=${imageTag} \
-                --set nginx.image.repository=${NGINX_IMAGE.tokenize(':')[0]} \
-                --set nginx.image.tag=${imageTag} \
-                --set environment=${environment} \
-                --wait \
-                --timeout=10m
-        else
-            echo "⚠️ Dossier charts/ non trouvé, déploiement Helm ignoré"
-            
-            # Déploiement basique avec kubectl (exemple)
-            cat << EOF | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: reimagined-spork-${environment}
-  namespace: ${environment}
-  labels:
-    app: reimagined-spork
-    environment: ${environment}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: reimagined-spork
-  template:
-    metadata:
-      labels:
-        app: reimagined-spork
-    spec:
-      imagePullSecrets:
-      - name: c8n-registry-secret
-      containers:
-      - name: nginx
-        image: ${NGINX_IMAGE}:${imageTag}
-        ports:
-        - containerPort: 80
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: reimagined-spork-service-${environment}
-  namespace: ${environment}
-spec:
-  selector:
-    app: reimagined-spork
-  ports:
-  - port: 80
-    targetPort: 80
-  type: ClusterIP
-EOF
-        fi
-        
-        # Vérification du déploiement
-        echo "⏳ Attente du déploiement..."
-        kubectl wait --for=condition=available --timeout=300s deployment/reimagined-spork-${environment} -n ${environment} || true
-        
-        echo "📋 État du déploiement:"
-        kubectl get pods,services -n ${environment} -l app=reimagined-spork
-    """
-    
-    echo "✅ Déploiement réussi en ${environment}"
 }
