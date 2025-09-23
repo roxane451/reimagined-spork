@@ -58,13 +58,14 @@ stage('📤 Push to Registry') {
             steps {
                 echo "📤 Publication vers c8n.io..."
                 sh '''
-                    # Vérifier si on est déjà connecté
-                    if podman login ${REGISTRY} --get-login > /dev/null 2>&1; then
-                        echo "✅ Déjà connecté à ${REGISTRY}"
-                    else
-                        echo "❌ Non connecté à ${REGISTRY}"
-                        exit 1
-                    fi
+                        if printf '%s' "${REGISTRY_PASS}" | podman login "${REGISTRY}" -u "${REGISTRY_USER}" --password-stdin; then
+                            echo "✅ Connexion réussie"
+                        else
+                            echo "❌ Échec de connexion"
+                            echo "🔍 Vérification des credentials..."
+                            echo "Username utilisé: ${REGISTRY_USER}"
+                            exit 1
+                        fi
                     
                     # Push Movie Service
                     if podman images | grep -q "${MOVIE_IMAGE}"; then
