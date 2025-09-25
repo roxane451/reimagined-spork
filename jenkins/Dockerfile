@@ -2,7 +2,7 @@ FROM jenkins/jenkins:lts
 
 USER root
 
-# Installer Podman, kubectl, helm
+# Installer Podman, curl, gnupg, helm, kubectl
 RUN apt-get update && apt-get install -y \
     podman \
     curl \
@@ -21,5 +21,11 @@ RUN curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | b
 # Ajouter Jenkins au groupe Podman
 RUN usermod -aG podman jenkins || true
 
+# Copier ta configuration Jenkins dans l'image
+# Assure-toi que ./jenkins_home contient ton JENKINS_HOME actuel
+COPY jenkins_home /var/jenkins_home
+RUN chown -R jenkins:jenkins /var/jenkins_home
+
 USER jenkins
 
+EXPOSE 8080
