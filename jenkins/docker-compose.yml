@@ -1,18 +1,19 @@
 services:
   jenkins:
-    image: jenkins/jenkins:lts
+    image: jenkins-with-kubectl-helm-podman:latest
     container_name: jenkins
     restart: unless-stopped
-    privileged: true  # Nécessaire pour Kind et Docker
     ports:
-      - "8080:8080"
-      - "50000:50000"
+      - "8080:8080"   # Interface web
+      - "50000:50000" # Agents Jenkins
     volumes:
-      # Configuration Jenkins existante
-      - ./jenkins_home:/var/jenkins_home:z
-      # Socket Docker pour Kind (Kind utilise Docker, pas Podman)
-      - /var/run/docker.sock:/var/run/docker.sock:z
+      - jenkins-data:/var/jenkins_home
+      - $PODMAN_SOCKET_PATH:/var/run/podman/podman.sock:z
     environment:
       - JENKINS_OPTS=--prefix=/jenkins
-      - DOCKER_HOST=unix:///var/run/docker.sock
-    user: "0"  # Root pour accès Docker socket
+    privileged: true
+    user: root
+
+volumes:
+  jenkins-data:
+    driver: local
