@@ -248,21 +248,39 @@ pipeline {
                     # Nettoyage des images inutiles
                     podman image prune -f || true
                     
-                    # Affichage du statut final des déploiements Helm
-                    echo "=== ÉTAT FINAL DES DÉPLOIEMENTS HELM ==="
-                    
-                    if helm list -n dev | grep -q reimagined-spork-dev; then
-                        echo "DEV - Helm Release Status:"
-                        helm status reimagined-spork-dev -n dev
+                    # Vérifier si Minikube est démarré avant les commandes kubectl/helm
+                    if minikube status | grep -q "Running"; then
+                        # Configurer l'environnement Minikube
+                        eval $(minikube docker-env)
+                        
+                        # Affichage du statut final des déploiements Helm
+                        echo "=== ÉTAT FINAL DES DÉPLOIEMENTS HELM ==="
+                        
+                        # Vérifier si helm est disponible
+                        if command -v helm &> /dev/null; then
+                            if helm list -n dev 2>/dev/null | grep -q reimagined-spork-dev; then
+                                echo "DEV - Helm Release Status:"
+                                helm status reimagined-spork-dev -n dev
+                            fi
+                            
+                            if helm list -n prod 2>/dev/null | grep -q reimagined-spork-prod; then
+                                echo "PROD - Helm Release Status:"
+                                helm status reimagined-spork-prod -n prod
+                            fi
+                        else
+                            echo "Helm non disponible pour le statut final"
+                        fi
+                        
+                        # Vérifier si kubectl est disponible
+                        if command -v kubectl &> /dev/null; then
+                            echo "Tous les namespaces:"
+                            kubectl get namespaces | grep -E "(dev|prod)" || echo "Aucun namespace dev/prod trouvé"
+                        else
+                            echo "kubectl non disponible pour vérifier les namespaces"
+                        fi
+                    else
+                        echo "Minikube non démarré - impossible de vérifier les déploiements"
                     fi
-                    
-                    if helm list -n prod | grep -q reimagined-spork-prod; then
-                        echo "PROD - Helm Release Status:"
-                        helm status reimagined-spork-prod -n prod
-                    fi
-                    
-                    echo "Tous les namespaces:"
-                    kubectl get namespaces | grep -E "(dev|prod)" || echo "Aucun namespace dev/prod trouvé"
                 '''
             }
         }
