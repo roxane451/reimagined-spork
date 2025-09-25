@@ -1,12 +1,16 @@
-FROM jenkins/jenkins:lts
+#!/bin/bash
 
-USER root
+# Créer un volume persistant pour Jenkins
+podman volume create jenkins-data
 
-# Mettre à jour les paquets et installer Podman
-RUN apt-get update && \
-    apt-get install -y podman && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Revenir à l'utilisateur Jenkins pour la compatibilité
-USER jenkins
+podman run -d \
+  --name jenkins \
+  -p 8080:8080 \
+  -p 50000:50000 \
+  -v jenkins_home:/var/jenkins_home \
+  -v /usr/local/bin/minikube:/usr/local/bin/minikube:ro \
+  -v /usr/local/bin/kubectl:/usr/local/bin/kubectl:ro \
+  -v ~/.minikube:/var/jenkins_home/.minikube:Z \
+  -v ~/.kube:/var/jenkins_home/.kube:Z \
+  --privileged \
+  jenkins/jenkins:lts
