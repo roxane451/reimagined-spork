@@ -89,13 +89,10 @@ pipeline {
         }
         
         stage('Deploy DEV') {
-            when { 
-                anyOf { 
-                    branch 'main'; branch 'master'; branch 'develop' 
-                } 
-            }
             steps {
                 echo "Déploiement automatique en DEV avec Helm..."
+                echo "Branche détectée: ${env.BRANCH_NAME}"
+                echo "Conditions de déploiement DEV remplies"
                 script {
                     sh '''
                         # Vérifier que Minikube est démarré
@@ -155,6 +152,7 @@ pipeline {
                 } 
             }
             steps {
+                echo "Branche détectée pour PROD: ${env.BRANCH_NAME}"
                 script {
                     timeout(time: 10, unit: 'MINUTES') {
                         def deployProd = input(
@@ -256,15 +254,19 @@ pipeline {
         }
         
         success {
-            echo """
+            script {
+                def devDeployed = env.BRANCH_NAME in ['main', 'master', 'develop'] ? 'reimagined-spork-dev (namespace: dev)' : 'Non déployé (branche non éligible)'
+                def prodDeployed = env.DEPLOY_PROD == 'Oui' ? 'reimagined-spork-prod (namespace: prod)' : 'Non déployé'
+                
+                echo """
             Pipeline réussi !
             
             Images construites:
             - Registry externe: ${REGISTRY}/${USERNAME}/*:${BUILD_TAG}
             
             Déploiements Helm:
-            - DEV: reimagined-spork-dev (namespace: dev)
-            - PROD: ${env.DEPLOY_PROD == 'Oui' ? 'reimagined-spork-prod (namespace: prod)' : 'Non déployé'}
+            - DEV: ${devDeployed}
+            - PROD: ${prodDeployed}
             
             Commandes utiles:
             - helm list --all-namespaces
@@ -272,6 +274,7 @@ pipeline {
             - kubectl get all -n prod
             - minikube service list
             """
+            }
         }
         
         failure {
