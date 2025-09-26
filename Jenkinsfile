@@ -80,10 +80,12 @@ pipeline {
                                     echo $PASS | podman login --username $USER --password-stdin $REGISTRY
                                     
                                     echo "=== Build Cast Service ==="
-                                    podman build -t $REGISTRY/$USER/cast-service:$BUILD_NUMBER .
+                                    # Nettoyer le username (enlever @gmail.com si présent)
+                                    CLEAN_USER=$(echo $USER | cut -d'@' -f1)
+                                    podman build -t $REGISTRY/$CLEAN_USER/cast-service:$BUILD_NUMBER .
                                     
                                     echo "=== Push Image ==="
-                                    podman push $REGISTRY/$USER/cast-service:$BUILD_NUMBER
+                                    podman push $REGISTRY/$CLEAN_USER/cast-service:$BUILD_NUMBER
                                     
                                     echo "✅ Cast Service built and pushed"
                                 '''
@@ -102,10 +104,12 @@ pipeline {
                             withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                                 sh '''
                                     echo "=== Build Movie Service ==="
-                                    podman build -t $REGISTRY/$USER/movie-service:$BUILD_NUMBER .
+                                    # Nettoyer le username
+                                    CLEAN_USER=$(echo $USER | cut -d'@' -f1)
+                                    podman build -t $REGISTRY/$CLEAN_USER/movie-service:$BUILD_NUMBER .
                                     
                                     echo "=== Push Image ==="
-                                    podman push $REGISTRY/$USER/movie-service:$BUILD_NUMBER
+                                    podman push $REGISTRY/$CLEAN_USER/movie-service:$BUILD_NUMBER
                                     
                                     echo "✅ Movie Service built and pushed"
                                 '''
