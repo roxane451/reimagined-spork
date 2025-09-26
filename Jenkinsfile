@@ -1,13 +1,14 @@
 pipeline {
     agent {
         kubernetes {
-            yaml '''
             apiVersion: v1
             kind: Pod
             metadata:
               labels:
                 app: jenkins-agent
             spec:
+              imagePullSecrets:
+              - name: c8n-registry-secret
               containers:
               - name: jnlp
                 image: c8n.io/roxane451/jenkins-agent:latest
@@ -25,26 +26,18 @@ pipeline {
               volumes:
               - name: workspace-volume
                 emptyDir: {}
-            '''
         }
     }
     
     environment {
-        // Registry Configuration
         REGISTRY = 'c8n.io'
         USERNAME = 'roxane451'
         REPO_NAME = 'reimagined-spork'
         BUILD_TAG = "${BUILD_NUMBER}"
-        
-        // Image Names
         MOVIE_IMAGE = "${REGISTRY}/${USERNAME}/movie-service"
         CAST_IMAGE = "${REGISTRY}/${USERNAME}/cast-service"  
         NGINX_IMAGE = "${REGISTRY}/${USERNAME}/nginx"
-        
-        // Kind cluster name
         KIND_CLUSTER = 'devops-cluster'
-        
-        // Helm settings
         HELM_CHART_PATH = './charts'
         HELM_RELEASE_NAME = 'reimagined-spork'
     }
@@ -55,12 +48,6 @@ pipeline {
                 echo "Vérification de l'environnement..."
                 script {
                     sh '''
-                        # Installer les outils si absents
-                        command -v podman || { curl -fsSL https://podman.io/install.sh | bash; }
-                        command -v kubectl || { curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && chmod +x kubectl && mv kubectl /usr/local/bin/; }
-                        command -v kind || { curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64 && chmod +x ./kind && mv ./kind /usr/local/bin/; }
-                        command -v helm || { curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 && chmod 700 get_helm.sh && ./get_helm.sh; }
-                        
                         echo "=== Vérification des outils ==="
                         podman --version || { echo "Podman non trouvé"; exit 1; }
                         kind --version || { echo "Kind non trouvé"; exit 1; }
@@ -93,8 +80,6 @@ pipeline {
             steps {
                 echo "Récupération du code source..."
                 checkout scm
-                
-                // Afficher les informations Git
                 script {
                     sh '''
                         echo "=== Informations Git ==="
@@ -156,10 +141,7 @@ pipeline {
                         script {
                             sh '''
                                 echo "=== Security scanning avec Podman ==="
-                                # Scan des images pour les vulnérabilités
-                                podman run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                                    -v ${PWD}:/workspace aquasec/trivy:latest \
-                                    image ${MOVIE_IMAGE}:${BUILD_TAG} || echo "Trivy scan completed"
+                                podman run --rm aquasec/trivy:latest image ${MOVIE_IMAGE}:${BUILD_TAG} || echo "Trivy scan completed"
                             '''
                         }
                     }
@@ -195,7 +177,6 @@ pipeline {
                             echo "Registry: ${REGISTRY}"
                             echo "Username: ${REGISTRY_USER}"
                             
-                            # Logout puis login
                             podman logout ${REGISTRY} 2>/dev/null || true
                             
                             if printf '%s' "${REGISTRY_PASS}" | podman login "${REGISTRY}" -u "${REGISTRY_USER}" --password-stdin; then
@@ -230,17 +211,12 @@ pipeline {
                 script {
                     sh '''
                         echo "=== Chargement des images dans Kind ==="
-                        
-                        # Chargement via Kind
                         kind load docker-image ${MOVIE_IMAGE}:${BUILD_TAG} --name ${KIND_CLUSTER}
                         kind load docker-image ${CAST_IMAGE}:${BUILD_TAG} --name ${KIND_CLUSTER}
                         kind load docker-image ${NGINX_IMAGE}:${BUILD_TAG} --name ${KIND_CLUSTER}
                         
                         echo "Images chargées avec succès dans Kind"
-                        
-                        # Vérification des images dans le cluster
                         kubectl get nodes
-                        docker exec -it ${KIND_CLUSTER}-control-plane crictl images | grep ${USERNAME} || echo "Images chargées"
                     '''
                 }
             }
@@ -249,42 +225,33 @@ pipeline {
     
     post {
         always {
-            echo "Nettoyage des ressources..."
-            script {
-                sh '''
-                    # Nettoyage des images locales anciennes
-                    podman image prune -f --filter "until=24h" || true
-                    
-                    # Sauvegarde des logs
-                    mkdir -p /tmp/jenkins-logs/${BUILD_NUMBER}
-                    kubectl logs --all-containers=true --selector="app in (movie-service,cast-service,nginx)" -n dev > /tmp/jenkins-logs/${BUILD_NUMBER}/dev-logs.txt || true
-                    
-                    echo "Nettoyage terminé"
-                '''
+            node {
+                echo "Nettoyage des ressources..."
+                script {
+                    sh '''
+                        podman image prune -f --filter "until=24h" || true
+                        mkdir -p /tmp/jenkins-logs/${BUILD_NUMBER}
+                        kubectl logs --all-containers=true --selector="app in (movie-service,cast-service,nginx)" -n dev > /tmp/jenkins-logs/${BUILD_NUMBER}/dev-logs.txt || true
+                        echo "Nettoyage terminé"
+                    '''
+                }
+                archiveArtifacts artifacts: 'charts/**/*', allowEmptyArchive: true
+                junit testResults: 'test-results/*.xml', allowEmptyResults: true
             }
-            
-            // Archive des artefacts
-            archiveArtifacts artifacts: 'charts/**/*', allowEmptyArchive: true
-            
-            // Publication des résultats de tests avec JUnit
-            junit testResults: 'test-results/*.xml', allowEmptyResults: true
         }
         
         success {
             echo """
             🎉 PIPELINE RÉUSSI !
-            
             📦 Images construites et publiées:
             - ${REGISTRY}/${USERNAME}/movie-service:${BUILD_TAG}
             - ${REGISTRY}/${USERNAME}/cast-service:${BUILD_TAG}
             - ${REGISTRY}/${USERNAME}/nginx:${BUILD_TAG}
-            
             🚀 Environnements déployés:
             - DEV: Automatique sur branches main/master/develop
             - QA: Automatique sur branches main/master/develop/release
             - STAGING: Automatique sur branches main/master
             - PROD: Manuel avec approbation sur branches main/master
-            
             📋 Version: ${BUILD_TAG}
             🕒 Durée: ${currentBuild.durationString}
             """
@@ -293,7 +260,6 @@ pipeline {
         failure {
             echo """
             ❌ PIPELINE ÉCHOUÉ !
-            
             🔍 Vérifiez les logs pour plus de détails.
             📋 Build: #${BUILD_NUMBER}
             🌐 Console: ${BUILD_URL}console
