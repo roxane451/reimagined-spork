@@ -1,4 +1,47 @@
 pipeline {
+<<<<<<< HEAD
+    agent {
+        kubernetes {
+            yaml '''
+                apiVersion: v1
+                kind: Pod
+                spec:
+                  securityContext:
+                    runAsUser: 0
+                    fsGroup: 0
+                  containers:
+                  - name: podman
+                    image: quay.io/podman/stable:latest
+                    command:
+                    - sleep
+                    args:
+                    - 99d
+                    securityContext:
+                      privileged: true
+                      runAsUser: 0
+                    volumeMounts:
+                    - name: podman-storage
+                      mountPath: /var/lib/containers
+                  - name: kubectl
+                    image: bitnami/kubectl:latest
+                    command:
+                    - sleep
+                    args:
+                    - 99d
+                  - name: helm
+                    image: alpine/helm:latest
+                    command:
+                    - sleep
+                    args:
+                    - 99d
+                  volumes:
+                  - name: podman-storage
+                    emptyDir:
+                      sizeLimit: 5Gi
+            '''
+        }
+    }
+=======
     agent {
         kubernetes {
             yaml '''
@@ -45,6 +88,7 @@ pipeline {
             '''
         }
     }
+>>>>>>> d3de01c8455bb94cc67bba8adff3b4efef094d59
     
     environment {
         REGISTRY = 'c8n.io'
@@ -68,6 +112,35 @@ pipeline {
         
         stage('🏗️ Build Cast Service') {
             steps {
+<<<<<<< HEAD
+                container('podman') {
+                    script {
+                        dir('cast-service') {
+                            withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+                                sh '''
+                                    echo "=== Podman Version ==="
+                                    podman --version
+                                    
+                                    echo "=== Configure Podman Storage ==="
+                                    mkdir -p ~/.config/containers
+                                    echo '[storage]' > ~/.config/containers/storage.conf
+                                    echo 'driver = "vfs"' >> ~/.config/containers/storage.conf
+                                    
+                                    echo "=== Login to Registry ==="
+                                    echo $PASS | podman login --username $USER --password-stdin $REGISTRY
+                                    
+                                    echo "=== Build Cast Service ==="
+                                    podman build -t $REGISTRY/$USER/cast-service:$BUILD_NUMBER .
+                                    
+                                    echo "=== Push Image ==="
+                                    podman push $REGISTRY/$USER/cast-service:$BUILD_NUMBER
+                                    
+                                    echo "✅ Cast Service built and pushed"
+                                '''
+                            }
+                        }
+                    }
+=======
                 container('podman') {
                     script {
                         dir('cast-service') {
@@ -90,6 +163,7 @@ pipeline {
                             }
                         }
                     }
+>>>>>>> d3de01c8455bb94cc67bba8adff3b4efef094d59
                 }
             }
         }
@@ -212,10 +286,20 @@ pipeline {
         failure {
             echo '❌ Pipeline échoué!'
         }
+
         always {
             container('podman') {
-                sh 'podman system prune -f || true'
+                sh '''
+                    # Configure storage avant le nettoyage
+                    mkdir -p ~/.config/containers
+                    echo '[storage]' > ~/.config/containers/storage.conf
+                    echo 'driver = "vfs"' >> ~/.config/containers/storage.conf
+                    
+                    podman system prune -f || true
+                '''
             }
         }
+
+
     }
 }
