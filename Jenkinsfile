@@ -79,15 +79,18 @@ pipeline {
                                     echo "=== Login to Registry ==="
                                     echo $PASS | podman login --username $USER --password-stdin $REGISTRY
                                     
-                                    echo "=== Build Cast Service ==="
-                                    # Nettoyer le username (enlever @gmail.com si présent)
+                                    echo "=== Prepare Clean Username ==="
                                     CLEAN_USER=$(echo $USER | cut -d'@' -f1)
+                                    echo "Original user: $USER"
+                                    echo "Clean user for image: $CLEAN_USER"
+                                    
+                                    echo "=== Build Cast Service ==="
                                     podman build -t $REGISTRY/$CLEAN_USER/cast-service:$BUILD_NUMBER .
                                     
                                     echo "=== Push Image ==="
                                     podman push $REGISTRY/$CLEAN_USER/cast-service:$BUILD_NUMBER
                                     
-                                    echo "✅ Cast Service built and pushed"
+                                    echo "✅ Cast Service built and pushed as c8n.io/$CLEAN_USER/cast-service:$BUILD_NUMBER"
                                 '''
                             }
                         }
@@ -103,15 +106,17 @@ pipeline {
                         dir('movie-service') {
                             withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                                 sh '''
-                                    echo "=== Build Movie Service ==="
-                                    # Nettoyer le username
+                                    echo "=== Prepare Clean Username ==="
                                     CLEAN_USER=$(echo $USER | cut -d'@' -f1)
+                                    echo "Clean user for image: $CLEAN_USER"
+                                    
+                                    echo "=== Build Movie Service ==="
                                     podman build -t $REGISTRY/$CLEAN_USER/movie-service:$BUILD_NUMBER .
                                     
                                     echo "=== Push Image ==="
                                     podman push $REGISTRY/$CLEAN_USER/movie-service:$BUILD_NUMBER
                                     
-                                    echo "✅ Movie Service built and pushed"
+                                    echo "✅ Movie Service built and pushed as c8n.io/$CLEAN_USER/movie-service:$BUILD_NUMBER"
                                 '''
                             }
                         }
@@ -133,19 +138,21 @@ pipeline {
                         withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                             sh '''
                                 echo "=== Deploy to DEV namespace ==="
+                                CLEAN_USER=$(echo $USER | cut -d'@' -f1)
                                 
                                 # Simple deployment pour test
                                 kubectl create deployment cast-service \
-                                  --image=$REGISTRY/$USER/cast-service:$BUILD_NUMBER \
+                                  --image=$REGISTRY/$CLEAN_USER/cast-service:$BUILD_NUMBER \
                                   --namespace=$NAMESPACE_DEV \
                                   --dry-run=client -o yaml | kubectl apply -f -
                                 
                                 kubectl create deployment movie-service \
-                                  --image=$REGISTRY/$USER/movie-service:$BUILD_NUMBER \
+                                  --image=$REGISTRY/$CLEAN_USER/movie-service:$BUILD_NUMBER \
                                   --namespace=$NAMESPACE_DEV \
                                   --dry-run=client -o yaml | kubectl apply -f -
                                 
                                 echo "✅ Deployed to DEV"
+                                kubectl get pods -n $NAMESPACE_DEV
                             '''
                         }
                     }
@@ -161,14 +168,15 @@ pipeline {
                         withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                             sh '''
                                 echo "=== Deploy to QA namespace ==="
+                                CLEAN_USER=$(echo $USER | cut -d'@' -f1)
                                 
                                 kubectl create deployment cast-service \
-                                  --image=$REGISTRY/$USER/cast-service:$BUILD_NUMBER \
+                                  --image=$REGISTRY/$CLEAN_USER/cast-service:$BUILD_NUMBER \
                                   --namespace=$NAMESPACE_QA \
                                   --dry-run=client -o yaml | kubectl apply -f -
                                 
                                 kubectl create deployment movie-service \
-                                  --image=$REGISTRY/$USER/movie-service:$BUILD_NUMBER \
+                                  --image=$REGISTRY/$CLEAN_USER/movie-service:$BUILD_NUMBER \
                                   --namespace=$NAMESPACE_QA \
                                   --dry-run=client -o yaml | kubectl apply -f -
                                 
@@ -189,14 +197,15 @@ pipeline {
                         withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                             sh '''
                                 echo "=== Deploy to PROD namespace ==="
+                                CLEAN_USER=$(echo $USER | cut -d'@' -f1)
                                 
                                 kubectl create deployment cast-service \
-                                  --image=$REGISTRY/$USER/cast-service:$BUILD_NUMBER \
+                                  --image=$REGISTRY/$CLEAN_USER/cast-service:$BUILD_NUMBER \
                                   --namespace=$NAMESPACE_PROD \
                                   --dry-run=client -o yaml | kubectl apply -f -
                                 
                                 kubectl create deployment movie-service \
-                                  --image=$REGISTRY/$USER/movie-service:$BUILD_NUMBER \
+                                  --image=$REGISTRY/$CLEAN_USER/movie-service:$BUILD_NUMBER \
                                   --namespace=$NAMESPACE_PROD \
                                   --dry-run=client -o yaml | kubectl apply -f -
                                 
@@ -211,7 +220,15 @@ pipeline {
     
     post {
         success {
-            echo '✅ Pipeline réussi!'
+            echo '🎉 ✅ Pipeline réussi!'
+            script {
+                withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+                    def cleanUser = env.USER.split('@')[0]
+                    echo "🐳 Images créées:"
+                    echo "- c8n.io/${cleanUser}/cast-service:${BUILD_NUMBER}"
+                    echo "- c8n.io/${cleanUser}/movie-service:${BUILD_NUMBER}"
+                }
+            }
         }
         failure {
             echo '❌ Pipeline échoué!'
