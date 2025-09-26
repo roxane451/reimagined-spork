@@ -4,29 +4,40 @@ pipeline {
             yaml '''
                 apiVersion: v1
                 kind: Pod
-                metadata:
-                  name: podman-agent
                 spec:
+                  securityContext:
+                    runAsUser: 0
+                    fsGroup: 0
                   containers:
                   - name: podman
                     image: quay.io/podman/stable:latest
                     command:
-                    - cat
-                    tty: true
+                    - sleep
+                    args:
+                    - 99d
                     securityContext:
                       privileged: true
                       runAsUser: 0
                     env:
                     - name: STORAGE_DRIVER
                       value: "vfs"
+                    - name: STORAGE_OPTS
+                      value: "--storage-driver vfs"
                     volumeMounts:
                     - name: podman-storage
                       mountPath: /var/lib/containers
                   - name: kubectl
                     image: bitnami/kubectl:latest
                     command:
-                    - cat
-                    tty: true
+                    - sleep
+                    args:
+                    - 99d
+                  - name: helm
+                    image: alpine/helm:latest
+                    command:
+                    - sleep
+                    args:
+                    - 99d
                   volumes:
                   - name: podman-storage
                     emptyDir:
@@ -37,84 +48,157 @@ pipeline {
     
     environment {
         REGISTRY = 'c8n.io'
-        REGISTRY_CREDENTIAL = 'c8n-io-cred'
-        KUBECONFIG_CREDENTIAL = 'kubeconfig-cred'
+        REGISTRY_CRED = 'c8n-registry'
+        NAMESPACE_DEV = 'dev'
+        NAMESPACE_QA = 'qa'
+        NAMESPACE_STAGING = 'staging'
+        NAMESPACE_PROD = 'prod'
     }
     
     stages {
-        stage('🔍 Test Infrastructure') {
+        stage('🔍 Info') {
             steps {
-                container('podman') {
-                    sh '''
-                        echo "=== Test Podman ==="
-                        podman --version
-                        podman info --format "{{.Host.Hostname}}"
-                        
-                        echo "=== Test c8n.io ==="
-                        podman login --get-login c8n.io || echo "Pas encore connecté"
-                    '''
-                }
-                container('kubectl') {
-                    sh '''
-                        echo "=== Test Kubernetes ==="
-                        kubectl get nodes
-                    '''
+                script {
+                    echo "Branch: ${env.BRANCH_NAME ?: env.GIT_BRANCH}"
+                    echo "Build: ${env.BUILD_NUMBER}"
+                    echo "Workspace: ${env.WORKSPACE}"
                 }
             }
         }
         
-        stage('📦 Build avec Podman') {
+        stage('🏗️ Build Cast Service') {
             steps {
                 container('podman') {
                     script {
-                        def testImage = "${REGISTRY}/votre-username/test:${BUILD_NUMBER}"
-                        sh """
-                            # Build avec Podman
-                            echo 'FROM alpine:latest' > Dockerfile.test
-                            echo 'RUN echo "Built with Podman in Kubernetes!"' >> Dockerfile.test
-                            
-                            podman build -f Dockerfile.test -t ${testImage} .
-                            
-                            # Tag latest
-                            podman tag ${testImage} ${REGISTRY}/votre-username/test:latest
-                            
-                            echo "Image créée: ${testImage}"
-                        """
+                        dir('cast-service') {
+                            withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+                                sh '''
+                                    echo "=== Podman Version ==="
+                                    podman --version
+                                    
+                                    echo "=== Login to Registry ==="
+                                    echo $PASS | podman login --username $USER --password-stdin $REGISTRY
+                                    
+                                    echo "=== Build Cast Service ==="
+                                    podman build -t $REGISTRY/$USER/cast-service:$BUILD_NUMBER .
+                                    
+                                    echo "=== Push Image ==="
+                                    podman push $REGISTRY/$USER/cast-service:$BUILD_NUMBER
+                                    
+                                    echo "✅ Cast Service built and pushed"
+                                '''
+                            }
+                        }
                     }
                 }
             }
         }
         
-        stage('🚀 Push vers c8n.io') {
+        stage('🏗️ Build Movie Service') {
             steps {
                 container('podman') {
-                    withCredentials([usernamePassword(credentialsId: REGISTRY_CREDENTIAL,
-                                                    passwordVariable: 'PASSWORD',
-                                                    usernameVariable: 'USERNAME')]) {
-                        sh '''
-                            echo $PASSWORD | podman login --username $USERNAME --password-stdin c8n.io
-                            podman push c8n.io/votre-username/test:${BUILD_NUMBER}
-                            podman push c8n.io/votre-username/test:latest
-                            echo "✅ Images poussées vers c8n.io"
-                        '''
+                    script {
+                        dir('movie-service') {
+                            withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+                                sh '''
+                                    echo "=== Build Movie Service ==="
+                                    podman build -t $REGISTRY/$USER/movie-service:$BUILD_NUMBER .
+                                    
+                                    echo "=== Push Image ==="
+                                    podman push $REGISTRY/$USER/movie-service:$BUILD_NUMBER
+                                    
+                                    echo "✅ Movie Service built and pushed"
+                                '''
+                            }
+                        }
                     }
                 }
             }
         }
         
-        stage('🏙️ Deploy vers Dev') {
+        stage('🚀 Deploy to DEV') {
+            when {
+                anyOf {
+                    branch 'develop'
+                    branch 'main'
+                }
+            }
             steps {
                 container('kubectl') {
-                    withKubeConfig([credentialsId: KUBECONFIG_CREDENTIAL]) {
-                        sh '''
-                            # Test deployment simple
-                            kubectl create deployment test-podman \
-                                --image=c8n.io/votre-username/test:${BUILD_NUMBER} \
-                                --namespace=dev --dry-run=client -o yaml | \
-                            kubectl apply -f -
-                            
-                            echo "✅ Deployment créé dans namespace dev"
-                        '''
+                    script {
+                        withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+                            sh '''
+                                echo "=== Deploy to DEV namespace ==="
+                                
+                                # Simple deployment pour test
+                                kubectl create deployment cast-service \
+                                  --image=$REGISTRY/$USER/cast-service:$BUILD_NUMBER \
+                                  --namespace=$NAMESPACE_DEV \
+                                  --dry-run=client -o yaml | kubectl apply -f -
+                                
+                                kubectl create deployment movie-service \
+                                  --image=$REGISTRY/$USER/movie-service:$BUILD_NUMBER \
+                                  --namespace=$NAMESPACE_DEV \
+                                  --dry-run=client -o yaml | kubectl apply -f -
+                                
+                                echo "✅ Deployed to DEV"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🧪 Deploy to QA') {
+            when { branch 'develop' }
+            steps {
+                container('kubectl') {
+                    script {
+                        withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+                            sh '''
+                                echo "=== Deploy to QA namespace ==="
+                                
+                                kubectl create deployment cast-service \
+                                  --image=$REGISTRY/$USER/cast-service:$BUILD_NUMBER \
+                                  --namespace=$NAMESPACE_QA \
+                                  --dry-run=client -o yaml | kubectl apply -f -
+                                
+                                kubectl create deployment movie-service \
+                                  --image=$REGISTRY/$USER/movie-service:$BUILD_NUMBER \
+                                  --namespace=$NAMESPACE_QA \
+                                  --dry-run=client -o yaml | kubectl apply -f -
+                                
+                                echo "✅ Deployed to QA"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('🏭 Deploy to PROD') {
+            when { branch 'main' }
+            steps {
+                input message: '🚨 Deploy to PRODUCTION? 🚨', ok: 'DEPLOY'
+                container('kubectl') {
+                    script {
+                        withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+                            sh '''
+                                echo "=== Deploy to PROD namespace ==="
+                                
+                                kubectl create deployment cast-service \
+                                  --image=$REGISTRY/$USER/cast-service:$BUILD_NUMBER \
+                                  --namespace=$NAMESPACE_PROD \
+                                  --dry-run=client -o yaml | kubectl apply -f -
+                                
+                                kubectl create deployment movie-service \
+                                  --image=$REGISTRY/$USER/movie-service:$BUILD_NUMBER \
+                                  --namespace=$NAMESPACE_PROD \
+                                  --dry-run=client -o yaml | kubectl apply -f -
+                                
+                                echo "✅ Deployed to PRODUCTION"
+                            '''
+                        }
                     }
                 }
             }
@@ -122,19 +206,16 @@ pipeline {
     }
     
     post {
-        always {
-            container('podman') {
-                sh '''
-                    podman system prune -f || true
-                    rm -f Dockerfile.test || true
-                '''
-            }
-        }
         success {
-            echo '🎉 Pipeline Podman réussi !'
+            echo '✅ Pipeline réussi!'
         }
         failure {
-            echo '❌ Pipeline échoué, vérifiez les logs'
+            echo '❌ Pipeline échoué!'
+        }
+        always {
+            container('podman') {
+                sh 'podman system prune -f || true'
+            }
         }
     }
 }
