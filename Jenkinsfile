@@ -51,14 +51,14 @@ pipeline {
     }
     
     stages {
-        stage('🔍 Info') {
+        stage('Info') {
             steps {
                 script {
                     echo "Branch: ${env.BRANCH_NAME ?: env.GIT_BRANCH}"
                     echo "Build: ${env.BUILD_NUMBER}"
                     echo "Workspace: ${env.WORKSPACE}"
                     
-                    // Déterminer la branche proprement
+                    // Déterminer la branche
                     def branchName = env.BRANCH_NAME ?: env.GIT_BRANCH
                     if (branchName?.startsWith('origin/')) {
                         branchName = branchName.replace('origin/', '')
@@ -69,7 +69,7 @@ pipeline {
             }
         }
         
-        stage('🏗️ Build Cast Service') {
+        stage('Build Cast Service') {
             steps {
                 container('podman') {
                     script {
@@ -97,7 +97,7 @@ pipeline {
                                     echo "=== Push Image ==="
                                     podman push $REGISTRY/$CLEAN_USER/cast-service:$BUILD_NUMBER
                                     
-                                    echo "✅ Cast Service built and pushed"
+                                    echo "Cast Service built and pushed"
                                 '''
                             }
                         }
@@ -106,23 +106,23 @@ pipeline {
             }
         }
         
-        stage('🏗️ Build Movie Service') {
+        stage('Build Movie Service') {
             steps {
                 container('podman') {
                     script {
                         dir('movie-service') {
                             withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                                 sh '''
-                                    echo "=== Prepare Clean Username ==="
+                                    echo "Prepare Clean Username"
                                     CLEAN_USER=$(echo $USER | cut -d'@' -f1)
                                     
-                                    echo "=== Build Movie Service ==="
+                                    echo "Build Movie Service"
                                     podman build -t $REGISTRY/$CLEAN_USER/movie-service:$BUILD_NUMBER .
                                     
-                                    echo "=== Push Image ==="
+                                    echo "Push Image"
                                     podman push $REGISTRY/$CLEAN_USER/movie-service:$BUILD_NUMBER
                                     
-                                    echo "✅ Movie Service built and pushed"
+                                    echo " Movie Service built and pushed"
                                 '''
                             }
                         }
@@ -131,7 +131,7 @@ pipeline {
             }
         }
         
-        stage('🚀 Deploy to DEV') {
+        stage('Deploy to DEV') {
             when {
                 anyOf {
                     expression { env.CLEAN_BRANCH == 'develop' }
@@ -146,7 +146,7 @@ pipeline {
                     script {
                         withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                             sh '''
-                                echo "=== 🚀 Deploying to DEV namespace ==="
+                                echo " Deploying to DEV namespace"
                                 CLEAN_USER=$(echo $USER | cut -d'@' -f1)
                                 
                                 echo "Creating/updating deployments..."
@@ -174,8 +174,7 @@ pipeline {
                                   --namespace=$NAMESPACE_DEV \
                                   --dry-run=client -o yaml | kubectl apply -f -
                                 
-                                echo "✅ Successfully deployed to DEV!"
-                                echo "📋 Checking deployment status..."
+                                echo "Successfully deploy to DEV!"
                                 kubectl get pods -n $NAMESPACE_DEV
                                 kubectl get services -n $NAMESPACE_DEV
                             '''
@@ -185,7 +184,7 @@ pipeline {
             }
         }
         
-        stage('🧪 Deploy to QA') {
+        stage('Deploy to QA') {
             when { 
                 expression { env.CLEAN_BRANCH == 'develop' }
             }
@@ -194,7 +193,7 @@ pipeline {
                     script {
                         withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                             sh '''
-                                echo "=== 🧪 Deploying to QA namespace ==="
+                                echo "Deploying to QA namespace"
                                 CLEAN_USER=$(echo $USER | cut -d'@' -f1)
                                 
                                 kubectl create deployment cast-service \
@@ -207,7 +206,7 @@ pipeline {
                                   --namespace=$NAMESPACE_QA \
                                   --dry-run=client -o yaml | kubectl apply -f -
                                 
-                                echo "✅ Deployed to QA"
+                                echo "Deployed to QA"
                                 kubectl get pods -n $NAMESPACE_QA
                             '''
                         }
@@ -216,7 +215,7 @@ pipeline {
             }
         }
         
-        stage('🏭 Deploy to PROD') {
+        stage('Deploy to PROD') {
             when { 
                 anyOf {
                     expression { env.CLEAN_BRANCH == 'main' }
@@ -224,12 +223,12 @@ pipeline {
                 }
             }
             steps {
-                input message: '🚨 Deploy to PRODUCTION? 🚨', ok: 'DEPLOY'
+                input message: ' Deploy to PRODUCTION?', ok: 'DEPLOY'
                 container('kubectl') {
                     script {
                         withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                             sh '''
-                                echo "=== 🏭 Deploying to PROD namespace ==="
+                                echo "Deploying to PROD namespace"
                                 CLEAN_USER=$(echo $USER | cut -d'@' -f1)
                                 
                                 kubectl create deployment cast-service \
@@ -242,7 +241,7 @@ pipeline {
                                   --namespace=$NAMESPACE_PROD \
                                   --dry-run=client -o yaml | kubectl apply -f -
                                 
-                                echo "🎉 Successfully deployed to PRODUCTION!"
+                                echo "Successfully deployed to PRODUCTION"
                                 kubectl get pods -n $NAMESPACE_PROD
                             '''
                         }
@@ -254,7 +253,7 @@ pipeline {
     
     post {
         success {
-            echo '🎉 ✅ Pipeline completed successfully!'
+            echo 'Pipeline completed successfully!'
             script {
                 withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                     def cleanUser = env.USER.split('@')[0]
@@ -273,7 +272,7 @@ pipeline {
             }
         }
         failure {
-            echo '❌ Pipeline failed!'
+            echo 'Pipeline failed!'
         }
         always {
             container('podman') {
