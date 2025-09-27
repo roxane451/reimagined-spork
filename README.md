@@ -1,4 +1,4 @@
-# DevOps - Pipeline CI/CD avec Jenkins, Kubernetes et Jenkins
+# DevOps - Pipeline CI/CD avec Jenkins
 
 ## Contexte et Objectifs
 En tant qu’ingénieur **DevOps junior**, l’objectif est de mettre en place un **pipeline CI/CD complet** pour une application microservices.  
