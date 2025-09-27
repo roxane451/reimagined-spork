@@ -76,25 +76,25 @@ pipeline {
                         dir('cast-service') {
                             withCredentials([usernamePassword(credentialsId: REGISTRY_CRED, passwordVariable: 'PASS', usernameVariable: 'USER')]) {
                                 sh '''
-                                    echo "=== Podman Version ==="
+                                    echo "Podman Version "
                                     podman --version
                                     
-                                    echo "=== Configure Podman Storage ==="
+                                    echo "Configure Podman Storage"
                                     mkdir -p ~/.config/containers
                                     echo '[storage]' > ~/.config/containers/storage.conf
                                     echo 'driver = "vfs"' >> ~/.config/containers/storage.conf
                                     
-                                    echo "=== Login to Registry ==="
+                                    echo "Login to Registry"
                                     echo $PASS | podman login --username $USER --password-stdin $REGISTRY
                                     
-                                    echo "=== Prepare Clean Username ==="
+                                    echo "Prepare Clean Username"
                                     CLEAN_USER=$(echo $USER | cut -d'@' -f1)
                                     echo "Clean user for image: $CLEAN_USER"
                                     
-                                    echo "=== Build Cast Service ==="
+                                    echo "Build Cast Service "
                                     podman build -t $REGISTRY/$CLEAN_USER/cast-service:$BUILD_NUMBER .
                                     
-                                    echo "=== Push Image ==="
+                                    echo "Push Image"
                                     podman push $REGISTRY/$CLEAN_USER/cast-service:$BUILD_NUMBER
                                     
                                     echo "Cast Service built and pushed"
